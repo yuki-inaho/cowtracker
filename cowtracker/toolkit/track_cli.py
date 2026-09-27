@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 from cowtracker.toolkit import render, runtime
+from cowtracker.toolkit.query_tracking import dense_tracks_from
 from cowtracker.toolkit.rerun_cli import export_rrd
 from cowtracker.toolkit.runner import MODES, build_runner, validate_size
 from cowtracker.toolkit.tracks import DenseTracker
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start", type=int, default=0, help="first frame position (0-based, in sorted order)")
     parser.add_argument("--end", type=int, default=None, help="end position (exclusive; default: all frames)")
     parser.add_argument("--step", type=int, default=1)
+    parser.add_argument(
+        "--query-frame",
+        type=int,
+        default=0,
+        help="track the pixels of this frame (index within the selected frames) forward and backward",
+    )
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument(
         "--size",
@@ -85,8 +92,14 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
         tracker, checkpoint = build_runner(args.checkpoint, args.device, args.vram_limit_gb, args.window_len, args.mode)
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
+    lengths = []
+
+    def counted(video: np.ndarray):
+        lengths.append(len(video))
+        return tracker(video)
+
     start = time.perf_counter()
-    dense = tracker(rgb)
+    dense = dense_tracks_from(counted, rgb, args.query_frame)
     seconds = time.perf_counter() - start
 
     out = Path(args.out)
@@ -99,8 +112,9 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
         frame_ids=frames.frame_ids,
         size_hw=np.array(size_hw),
         source_hw=np.array(frames.rgb.shape[1:3]),
+        query_frame=args.query_frame,
     )
-    tracks, visible, colors = render.grid_tracks(dense, args.grid_stride, args.vis_thr)
+    tracks, visible, colors = render.grid_tracks(dense, args.grid_stride, args.vis_thr, args.query_frame)
     fps = args.fps or frames.fps or DEFAULT_IMAGE_FPS
     render.write_video(out / "tracks.mp4", render.paint_tracks(rgb, tracks, visible, colors, args.grid_stride), fps)
     if args.rrd:
@@ -113,12 +127,13 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
             trail=8,
             jpeg_quality=85,
             vis_thr=args.vis_thr,
+            query_frame=args.query_frame,
         )
     meta = {
         "args": vars(args),
         "frames": len(rgb),
         "fps": fps,
-        "calls": getattr(tracker, "calls", [{"frames": len(rgb), "mode": "injected"}]),
+        "calls": getattr(tracker, "calls", [{"frames": n, "mode": "injected"} for n in lengths]),
         "dtype": str(getattr(tracker, "dtype", None)),
         "seconds": seconds,
         "peak_vram_gb": runtime.peak_vram_gb() if args.device.startswith("cuda") else None,

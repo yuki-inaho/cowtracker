@@ -7,7 +7,24 @@ evaluated in "first" mode). A query on the last frame has nothing to track and i
 
 import numpy as np
 
-from cowtracker.toolkit.tracks import DenseTracker
+from cowtracker.toolkit.tracks import DenseTracker, DenseTracks
+
+
+def dense_tracks_from(tracker: DenseTracker, video: np.ndarray, query_frame: int) -> DenseTracks:
+    """Tracks of every pixel of ``video[query_frame]`` through the whole video, as AllTracker's demo does: forward
+    on ``video[q:]`` and, for q > 0, backward on ``video[:q + 1]`` reversed (the shared frame q is kept once)."""
+    if not 0 <= query_frame < len(video):
+        raise ValueError(f"query frame {query_frame} is outside a video of {len(video)} frames")
+    forward = tracker(video[query_frame:])
+    if query_frame == 0:
+        return forward
+    backward = tracker(np.ascontiguousarray(video[: query_frame + 1][::-1]))
+    return DenseTracks(
+        *(
+            np.concatenate([getattr(backward, key)[::-1][:-1], getattr(forward, key)])
+            for key in ("track", "vis", "conf")
+        )
+    )
 
 
 def track_queries_first(

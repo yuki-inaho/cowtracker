@@ -8,7 +8,7 @@ import numpy as np
 from cowtracker.toolkit import render
 from cowtracker.toolkit.rerun_log import TrackLayer, write_tracks_rrd
 from cowtracker.toolkit.tracks import DenseTracks
-from cowtracker.toolkit.video_io import load_frames, resize_frames
+from cowtracker.toolkit.video_io import Frames, load_frames, resize_frames
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,13 +23,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def source_frames(source: str | Path, frame_ids: np.ndarray) -> np.ndarray:
+def source_frames(source: str | Path, frame_ids: np.ndarray) -> Frames:
     """The source frames at ``frame_ids`` (an arithmetic range, as written by cow-track)."""
     step = int(frame_ids[1] - frame_ids[0]) if len(frame_ids) > 1 else 1
     frames = load_frames(source, int(frame_ids[0]), int(frame_ids[-1]) + 1, step)
     if not np.array_equal(frames.frame_ids, frame_ids):
         raise ValueError(f"{source} does not provide the frame ids of the tracks")
-    return frames.rgb
+    return frames
 
 
 def export_rrd(
@@ -41,20 +41,30 @@ def export_rrd(
     trail: int,
     jpeg_quality: int,
     vis_thr: float,
+    query_frame: int = 0,
 ) -> None:
-    tracks, visible, colors = render.grid_tracks(dense, grid_stride, vis_thr)
+    tracks, visible, colors = render.grid_tracks(dense, grid_stride, vis_thr, query_frame)
     write_tracks_rrd(out, rgb, {"pred": TrackLayer(tracks, visible, colors)}, frame_ids, trail, jpeg_quality)
+
+
+def load_tracks(path: str | Path) -> tuple[DenseTracks, np.ndarray, tuple[int, int], int]:
+    """(tracks, frame_ids, size_hw, query_frame) of a cow-track npz."""
+    with np.load(path) as data:
+        dense = DenseTracks(
+            track=data["tracks"], vis=data["vis"].astype(np.float32), conf=data["conf"].astype(np.float32)
+        )
+        # files written before --query-frame existed hold frame-0 queries
+        query_frame = int(data["query_frame"]) if "query_frame" in data else 0
+        return dense, data["frame_ids"], tuple(int(v) for v in data["size_hw"]), query_frame
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with np.load(args.tracks) as data:
-        dense = DenseTracks(
-            track=data["tracks"], vis=data["vis"].astype(np.float32), conf=data["conf"].astype(np.float32)
-        )
-        frame_ids, size_hw = data["frame_ids"], tuple(int(v) for v in data["size_hw"])
-    rgb = resize_frames(source_frames(args.source, frame_ids), size_hw)
-    export_rrd(args.out, rgb, dense, frame_ids, args.grid_stride, args.trail, args.jpeg_quality, args.vis_thr)
+    dense, frame_ids, size_hw, query_frame = load_tracks(args.tracks)
+    rgb = resize_frames(source_frames(args.source, frame_ids).rgb, size_hw)
+    export_rrd(
+        args.out, rgb, dense, frame_ids, args.grid_stride, args.trail, args.jpeg_quality, args.vis_thr, query_frame
+    )
     print(f"wrote {args.out}: {len(frame_ids)} frames")
     return 0
 

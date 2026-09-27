@@ -82,3 +82,31 @@ def test_track_cli_writes_rrd_when_requested(tmp_path):
     )
 
     assert "/frame/pred/points" in entity_paths(out / "tracks.rrd")
+
+
+def test_track_cli_tracks_from_a_query_frame_both_ways(tmp_path):
+    out = tmp_path / "out"
+    tracker = TranslatingTracker()
+    track_cli.main(
+        [
+            "--source",
+            str(_image_dir(tmp_path)),
+            "--size",
+            "112",
+            "224",
+            "--device",
+            "cpu",
+            "--out",
+            str(out),
+            "--query-frame",
+            "2",
+            "--rrd",
+        ],
+        tracker=tracker,
+    )
+
+    assert tracker.lengths == [4, 3]
+    with np.load(out / "tracks.npz") as data:
+        assert int(data["query_frame"]) == 2
+        np.testing.assert_allclose(data["tracks"][2, 10, 20], [20.0, 10.0])  # identity at the query frame
+        np.testing.assert_allclose(data["tracks"][0, 10, 20], [22.0, 14.0])  # two frames before it

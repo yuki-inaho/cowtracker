@@ -26,6 +26,7 @@ dependencies = [
 cow-track = "cowtracker.toolkit.track_cli:main"
 cow-rerun = "cowtracker.toolkit.rerun_cli:main"
 cow-eval-tapvid = "cowtracker.toolkit.eval_cli:main"
+cow-video = "cowtracker.toolkit.video_cli:main"
 
 [dependency-groups]
 dev = ["pytest", "ruff"]
