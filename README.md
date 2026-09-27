@@ -78,6 +78,8 @@ python demo.py --video videos/bmx-bumps.mp4 --output output.mp4 --checkpoint ./c
 
 ## 🧰 uv environment (Blackwell / CUDA 12.8) and toolkit
 
+For the `rtx2070` branch, see [RTX 2070 setup and verification](docs/rtx2070_setup.md) for the locked environment, checkpoint and shared-GPU commands.
+
 This fork adds a locked uv environment (`uv sync --locked`: torch 2.7.0+cu128, xformers 0.0.30, timm 1.0.25) that
 runs on RTX 50xx GPUs, and a toolkit in `cowtracker/toolkit` with four commands (`cow-video` renders AllTracker-style
 dense track videos; `cow-track --query-frame` tracks from any frame, forward and backward):

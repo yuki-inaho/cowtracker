@@ -3,6 +3,9 @@
 > 新しいエージェントや開発者が、このリポジトリだけを見て、環境・契約・検証の手順をつかむための入口です。
 > コマンドはすべてリポジトリのルートで実行します。使い方の詳細は [uv_tools.md](uv_tools.md) にあります。
 
+> `rtx2070` ブランチの実機セットアップは [rtx2070_setup.md](rtx2070_setup.md) を参照してください。
+> 以下の Blackwell 評価と RTX 2070 の実機確認は条件が異なります。
+
 **更新:** 2026-09-27
 **対象:** `yuki-inaho/cowtracker` の `blackwell` ブランチ（upstream は `facebookresearch/cowtracker`）
 
@@ -24,7 +27,8 @@
 - **未検証:**
   - Kinetics と RoboTAP の実データ（ローダの形式は、合成データのテストでだけ確認しています）。
   - Hopper など他の GPU（FA3 を使う経路は upstream のままで、ここでは動かしていません）。
-  - RTX 2070 の実機（RTX 5090 上で、VRAM 上限と kernel を同じにして模擬しただけ。[rtx2070_memory.md](rtx2070_memory.md)）。
+  - Blackwell 評価と同条件での RTX 2070 実機評価（[rtx2070_memory.md](rtx2070_memory.md)）。
+    `rtx2070` ブランチでは、別条件の短い実データによる動作確認を実施済み（[rtx2070_setup.md](rtx2070_setup.md)）。
   - CPU 推論は選択肢にしない（CPU の経路は、重みを使わないテストのためのもの）。
   - 学習と fine-tune（upstream にも学習コードはありません）。
 
