@@ -74,3 +74,34 @@ def test_eval_cli_caches_predictions_and_threshold_sweep(tmp_path):
     assert summary["sweep"]["0.3"]["oa"] == 100.0  # visconf 0.5 counts as visible
     assert summary["sweep"]["0.7"]["oa"] == 0.0  # and as occluded
     assert summary["mean"]["oa"] == 0.0  # default threshold 0.6
+
+
+def test_eval_cli_passes_the_dtype_to_the_runner(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_build_runner(checkpoint, device, vram_limit_gb, window_len, mode, dtype):
+        seen.update(window_len=window_len, dtype=dtype)
+        return TranslatingTracker(conf=1.0), None
+
+    monkeypatch.setattr(eval_cli, "build_runner", fake_build_runner)
+    eval_cli.main(
+        [
+            "--pkl",
+            str(_pickle(tmp_path)),
+            "--dataset-name",
+            "davis",
+            "--size",
+            str(H),
+            str(W),
+            "--device",
+            "cpu",
+            "--dtype",
+            "bf16",
+            "--window-len",
+            "40",
+            "--out",
+            str(tmp_path / "eval"),
+        ]
+    )
+
+    assert seen == {"window_len": 40, "dtype": "bf16"}

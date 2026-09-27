@@ -9,6 +9,7 @@ from cowtracker.toolkit.tracks import DenseTracks
 # fail with a patch-size assertion or a 63-vs-64 shape mismatch (measured on 330x550 ... 336x616).
 SIZE_MULTIPLE = 112
 MODES = ("auto", "full", "windowed")
+DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 
 
 def validate_size(size_hw: tuple[int, int]) -> tuple[int, int]:
@@ -30,35 +31,64 @@ def select_mode(mode: str, frames: int, window_len: int) -> str:
     return "full" if frames <= window_len else "windowed"
 
 
+def resolve_dtype(name: str, device: torch.device) -> torch.dtype:
+    """``auto``: fp16 on CUDA (upstream demo), fp32 on the CPU; fp16/bf16 on the CPU are refused."""
+    if name == "auto":
+        return torch.float16 if device.type == "cuda" else torch.float32
+    if name not in DTYPES:
+        raise ValueError(f"unknown dtype {name!r}; expected auto or one of {list(DTYPES)}")
+    if device.type == "cpu" and name != "fp32":
+        raise ValueError(f"{name} inference on the CPU is not supported; use --dtype fp32 (or auto)")
+    return DTYPES[name]
+
+
 class CowTrackerRunner:
     """``DenseTracker`` backed by the released checkpoint (loaded once, used for both modes)."""
 
-    def __init__(self, checkpoint: str | None, device: torch.device, window_len: int = 100, mode: str = "auto"):
+    def __init__(
+        self, checkpoint: str | None, device: torch.device, window_len: int = 100, mode: str = "auto", dtype="auto"
+    ):
         from cowtracker import CoWTrackerWindowed
 
         select_mode(mode, 1, window_len)
         self.device = device
-        self.dtype = torch.float16 if device.type == "cuda" else torch.float32  # upstream demo: fp16 on CUDA only
+        self.dtype = resolve_dtype(dtype, device)
         self.window_len = window_len
         self.mode = mode
         self.calls: list[dict] = []
+        # cast on the CPU, then move: the fp32 checkpoint (2x the fp16 weights) never occupies the GPU
         self.model = CoWTrackerWindowed.from_checkpoint(
-            checkpoint, window_len=window_len, stride=window_len, device=str(device), dtype=self.dtype
-        )
+            checkpoint, window_len=window_len, stride=window_len, device="cpu", dtype=self.dtype
+        ).to(device)
+        self.attention = self._attention_ops()
+
+    def _attention_ops(self) -> str:
+        """Name of the xformers ops of the video transformer for this dtype and device (for provenance)."""
+        from cowtracker.layers.video_transformer import CUTLASS_OPS, _get_flash_attention_ops
+
+        if self.device.type != "cuda":
+            return "torch_sdpa"
+        ops = CUTLASS_OPS if self.dtype == torch.float32 else _get_flash_attention_ops()
+        return ops[0].NAME
 
     @torch.no_grad()
     def __call__(self, video: np.ndarray) -> DenseTracks:
         mode = select_mode(self.mode, len(video), self.window_len)
         torch.cuda.empty_cache()  # suffixes of varying length fragment the cache (OOM on TAP-Vid DAVIS at 30 GB)
         frames = torch.from_numpy(np.ascontiguousarray(video)).permute(0, 3, 1, 2).float().to(self.device)
-        with torch.autocast(device_type=self.device.type, dtype=self.dtype, enabled=self.device.type == "cuda"):
+        with torch.autocast(device_type=self.device.type, dtype=self.dtype, enabled=self.dtype != torch.float32):
             out = (self.model.model if mode == "full" else self.model)(frames)
         self.calls.append({"frames": len(video), "mode": mode})
         return DenseTracks(*(out[key][0].float().cpu().numpy() for key in ("track", "vis", "conf")))
 
 
 def build_runner(
-    checkpoint: str | None, device_name: str, vram_limit_gb: float | None, window_len: int, mode: str
+    checkpoint: str | None,
+    device_name: str,
+    vram_limit_gb: float | None,
+    window_len: int,
+    mode: str,
+    dtype: str = "auto",
 ) -> tuple[CowTrackerRunner, str]:
     """Runner on an explicit device under an optional VRAM limit, and the checkpoint file it loaded.
 
@@ -76,4 +106,4 @@ def build_runner(
         runtime.apply_vram_limit(vram_limit_gb, device.index or 0)
     if checkpoint is None:
         checkpoint = hf_hub_download(repo_id=CoWTracker.DEFAULT_REPO_ID, filename=CoWTracker.DEFAULT_FILENAME)
-    return CowTrackerRunner(checkpoint, device, window_len=window_len, mode=mode), checkpoint
+    return CowTrackerRunner(checkpoint, device, window_len=window_len, mode=mode, dtype=dtype), checkpoint

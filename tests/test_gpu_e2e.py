@@ -88,3 +88,35 @@ def test_windowed_forward_does_not_keep_the_previous_window(runner):
     peak_gb = (torch.cuda.max_memory_allocated() - before) / GB
 
     assert peak_gb <= WINDOWED_250_PEAK_GB
+
+
+@torch.no_grad()
+def test_every_dtype_runs_and_agrees_with_fp32(runner):
+    from cowtracker import CoWTracker
+
+    video = torch.from_numpy(np.asarray(mediapy.resize_video(mediapy.read_video(str(VIDEO))[:8], (224, 336))))
+    video = video.permute(0, 3, 1, 2).float().cuda()
+    tracks = {}
+    for name, dtype in (("fp32", torch.float32), ("bf16", torch.bfloat16), ("fp16", torch.float16)):
+        model = CoWTracker.from_checkpoint(os.environ["COWTRACKER_CHECKPOINT"], device="cuda", dtype=dtype)
+        with torch.autocast(device_type="cuda", dtype=dtype, enabled=dtype != torch.float32):
+            tracks[name] = model(video)["track"][0, 1:].float()
+        del model
+        torch.cuda.empty_cache()
+
+    for name in ("bf16", "fp16"):
+        assert float((tracks[name] - tracks["fp32"]).norm(dim=-1).median()) <= 0.5
+
+
+def test_runner_loads_without_fp32_weights_on_the_gpu(runner):
+    from cowtracker.toolkit.runner import build_runner
+
+    fixture_bytes = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    second, _ = build_runner(os.environ["COWTRACKER_CHECKPOINT"], "cuda", None, window_len=100, mode="auto")
+    load_peak_gb = (torch.cuda.max_memory_allocated() - fixture_bytes) / GB
+    weights_gb = sum(p.numel() * p.element_size() for p in second.model.parameters()) / GB
+    del second
+    torch.cuda.empty_cache()
+
+    assert load_peak_gb <= 1.2 * weights_gb  # cast on the CPU: the fp32 checkpoint (2x) never reaches the GPU

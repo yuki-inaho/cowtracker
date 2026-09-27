@@ -21,7 +21,7 @@ from cowtracker.toolkit import render, runtime
 from cowtracker.toolkit.metrics import THRESHOLDS, compute_tapvid_metrics
 from cowtracker.toolkit.query_tracking import track_queries_first
 from cowtracker.toolkit.rerun_log import TrackLayer, write_tracks_rrd
-from cowtracker.toolkit.runner import MODES, build_runner, validate_size
+from cowtracker.toolkit.runner import DTYPES, MODES, build_runner, validate_size
 from cowtracker.toolkit.tapvid import TapVidDataset, TapVidSample
 from cowtracker.toolkit.tracks import DenseTracker
 from cowtracker.utils.visualization import get_2d_colors
@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--mode", choices=MODES, default="auto")
+    parser.add_argument("--dtype", choices=["auto", *DTYPES], default="auto", help="auto: fp16 on CUDA, fp32 on CPU")
     parser.add_argument("--window-len", type=int, default=100)
     parser.add_argument("--vram-limit-gb", type=float, default=None)
     return parser
@@ -123,7 +124,9 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
     count = len(dataset) if args.max_videos is None else min(args.max_videos, len(dataset))
     checkpoint = None
     if tracker is None:
-        tracker, checkpoint = build_runner(args.checkpoint, args.device, args.vram_limit_gb, args.window_len, args.mode)
+        tracker, checkpoint = build_runner(
+            args.checkpoint, args.device, args.vram_limit_gb, args.window_len, args.mode, args.dtype
+        )
     cuda = args.device.startswith("cuda")
     out = Path(args.out)
     (out / "predictions").mkdir(parents=True, exist_ok=True)
@@ -185,6 +188,7 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
         "peak_vram_gb": max(measured_peaks) if measured_peaks else None,
         "args": vars(args),
         "dtype": str(getattr(tracker, "dtype", None)),
+        "attention": getattr(tracker, "attention", None),
         "checkpoint": runtime.checkpoint_info(checkpoint),
         **runtime.run_metadata(),
     }

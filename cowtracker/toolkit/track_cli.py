@@ -17,7 +17,7 @@ import torch
 from cowtracker.toolkit import render, runtime
 from cowtracker.toolkit.query_tracking import dense_tracks_from
 from cowtracker.toolkit.rerun_cli import export_rrd
-from cowtracker.toolkit.runner import MODES, build_runner, validate_size
+from cowtracker.toolkit.runner import DTYPES, MODES, build_runner, validate_size
 from cowtracker.toolkit.tracks import DenseTracker
 from cowtracker.toolkit.video_io import load_frames, resize_frames
 
@@ -59,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--window-len", type=int, default=100, help="window of the windowed model (upstream: 100)")
     parser.add_argument(
+        "--dtype",
+        choices=["auto", *DTYPES],
+        default="auto",
+        help="auto: fp16 on CUDA (upstream demo), fp32 on the CPU; bf16 needs an Ampere or newer GPU",
+    )
+    parser.add_argument(
         "--vram-limit-gb",
         type=float,
         default=None,
@@ -89,7 +95,9 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
     rgb = resize_frames(frames.rgb, size_hw)
     checkpoint = None
     if tracker is None:
-        tracker, checkpoint = build_runner(args.checkpoint, args.device, args.vram_limit_gb, args.window_len, args.mode)
+        tracker, checkpoint = build_runner(
+            args.checkpoint, args.device, args.vram_limit_gb, args.window_len, args.mode, args.dtype
+        )
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
     lengths = []
@@ -135,6 +143,7 @@ def main(argv: list[str] | None = None, tracker: DenseTracker | None = None) -> 
         "fps": fps,
         "calls": getattr(tracker, "calls", [{"frames": n, "mode": "injected"} for n in lengths]),
         "dtype": str(getattr(tracker, "dtype", None)),
+        "attention": getattr(tracker, "attention", None),
         "seconds": seconds,
         "peak_vram_gb": runtime.peak_vram_gb() if args.device.startswith("cuda") else None,
         "checkpoint": runtime.checkpoint_info(checkpoint),

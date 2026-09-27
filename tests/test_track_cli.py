@@ -110,3 +110,30 @@ def test_track_cli_tracks_from_a_query_frame_both_ways(tmp_path):
         assert int(data["query_frame"]) == 2
         np.testing.assert_allclose(data["tracks"][2, 10, 20], [20.0, 10.0])  # identity at the query frame
         np.testing.assert_allclose(data["tracks"][0, 10, 20], [22.0, 14.0])  # two frames before it
+
+
+def test_track_cli_passes_the_dtype_to_the_runner(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_build_runner(checkpoint, device, vram_limit_gb, window_len, mode, dtype):
+        seen.update(device=device, dtype=dtype)
+        return TranslatingTracker(), None
+
+    monkeypatch.setattr(track_cli, "build_runner", fake_build_runner)
+    track_cli.main(
+        [
+            "--source",
+            str(_image_dir(tmp_path)),
+            "--size",
+            "112",
+            "224",
+            "--device",
+            "cpu",
+            "--dtype",
+            "fp32",
+            "--out",
+            str(tmp_path / "out"),
+        ]
+    )
+
+    assert seen == {"device": "cpu", "dtype": "fp32"}

@@ -46,6 +46,10 @@ def get_1d_sincos_pos_embed_from_grid(
     return emb[None].float()
 
 
+# Exact attention for inputs Flash Attention cannot take (fp32) and for compute capability < 8.0.
+CUTLASS_OPS = (xops.fmha.cutlass.FwOp, xops.fmha.cutlass.BwOp)
+
+
 def _get_flash_attention_ops():
     """Automatically detect GPU and return appropriate flash attention ops.
 
@@ -68,9 +72,12 @@ def _get_flash_attention_ops():
             # Fall back to flash2 if flash3 not available
             print("Flash Attention 3 not available, falling back to Flash Attention 2")
             return (xops.fmha.flash.FwOp, xops.fmha.flash.BwOp)
-    else:
-        # Use Flash Attention 2 for older GPUs
+    elif major >= 8:
+        # Use Flash Attention 2 for Ampere and newer (it needs sm_80+)
         return (xops.fmha.flash.FwOp, xops.fmha.flash.BwOp)
+    else:
+        # Turing and older (e.g. RTX 20xx, sm_75): xformers' cutlass kernels
+        return CUTLASS_OPS
 
 
 class FlashAttention3(nn.Module):
@@ -109,17 +116,25 @@ class FlashAttention3(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv.unbind(2)  # Each is (B, N, num_heads, head_dim)
 
-        # xformers expects [B, M, H, K] format - we already have it!
-        # Use xformers memory_efficient_attention with Flash Attention 3
-        x = xops.memory_efficient_attention(
-            q,
-            k,
-            v,
-            attn_bias=attn_mask,  # Pass attention mask if provided
-            p=self.attn_drop if self.training else 0.0,
-            scale=self.scale,
-            op=self.flash_ops,
-        )
+        dropout = self.attn_drop if self.training else 0.0
+        if not x.is_cuda:
+            # xformers has no CPU kernels: the same exact attention via PyTorch ([B, H, N, K] layout)
+            x = F.scaled_dot_product_attention(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                attn_mask=attn_mask, dropout_p=dropout, scale=self.scale,
+            ).transpose(1, 2)
+        else:
+            # xformers expects [B, M, H, K] format - we already have it!
+            # Flash Attention takes fp16/bf16 only; fp32 runs on the cutlass kernels
+            x = xops.memory_efficient_attention(
+                q,
+                k,
+                v,
+                attn_bias=attn_mask,  # Pass attention mask if provided
+                p=dropout,
+                scale=self.scale,
+                op=CUTLASS_OPS if q.dtype == torch.float32 else self.flash_ops,  # q: after autocast
+            )
 
         # Reshape back to [B, N, C]
         x = x.reshape(B, N, C)
