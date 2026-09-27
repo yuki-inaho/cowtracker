@@ -76,6 +76,20 @@ python demo.py --video videos/bmx-bumps.mp4 --output output.mp4 --checkpoint ./c
 ```
 
 
+## 🧰 uv environment (Blackwell / CUDA 12.8) and toolkit
+
+This fork adds a locked uv environment (`uv sync --locked`: torch 2.7.0+cu128, xformers 0.0.30, timm 1.0.25) that
+runs on RTX 50xx GPUs, and a toolkit in `cowtracker/toolkit` with three commands:
+
+```bash
+uv run cow-track --source videos/bmx-bumps.mp4 --size 336 560 --out outputs/bmx --rrd   # tracks.npz / .mp4 / .rrd
+uv run cow-rerun --tracks outputs/bmx/tracks.npz --source videos/bmx-bumps.mp4 --out outputs/bmx/tracks.rrd
+uv run cow-eval-tapvid --pkl tapvid_davis.pkl --dataset-name davis --out outputs/eval/davis   # AJ / δavg / OA
+```
+
+Input sizes must be multiples of 112. See [docs/uv_tools.md](docs/uv_tools.md) (Japanese) for the data loaders,
+the evaluation protocol, the VRAM budget and the two small model changes needed on Blackwell GPUs.
+
 ## ⚙️ Command Line Options
 
 ```
