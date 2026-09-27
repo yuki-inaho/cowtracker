@@ -59,8 +59,9 @@ def _get_flash_attention_ops():
     major, _ = torch.cuda.get_device_capability()
     # print("compute capability: ", torch.cuda.get_device_capability())
     # H100 has compute capability 9.0
-    if major >= 9:
-        # Use Flash Attention 3 for H100 and newer
+    # FA3 kernels are built for Hopper only; sm_100/sm_120 (Blackwell) abort with "no kernel image".
+    if major == 9:
+        # Use Flash Attention 3 for H100 (Hopper)
         try:
             return (xops.fmha.flash3.FwOp, xops.fmha.flash3.BwOp)
         except AttributeError:
