@@ -60,12 +60,14 @@ uv run cow-track --source <画像フォルダ> --start 788 --end 888 --size 336 
 - `--device cuda`（既定）: CUDA が無ければエラーになります。CPU へ自動で切り替えることはありません。CPU で動かすときは
   `--device cpu` を明示してください（fp32 になり、非常に遅いです）。
 - `--vram-limit-gb`: この値でプロセスの VRAM に上限をかけます。起動時の空きが上限より少なければ、開始しません。
+- `--query-frame q`（既定 0）: 選んだフレームのうち q 番目の全画素を追跡します。AllTracker の demo と同じく、
+  `video[q:]` を前向きに、`video[:q+1]` を逆順にして後ろ向きに推論し、重なるフレーム q は 1 回だけ使います。
 
 出力（`--out`）:
 
 | ファイル | 中身 |
 | :--- | :--- |
-| `tracks.npz` | `tracks` [T,H,W,2] float32（フレーム 0 の全画素の (x, y) px）、`vis`・`conf` [T,H,W] float16、`frame_ids`、`size_hw`、`source_hw` |
+| `tracks.npz` | `tracks` [T,H,W,2] float32（クエリフレームの全画素の (x, y) px）、`vis`・`conf` [T,H,W] float16、`frame_ids`、`size_hw`、`source_hw`、`query_frame` |
 | `tracks.mp4` | `--grid-stride` 間隔の点を、位置に応じた色で描いた動画（vis×conf > `--vis-thr`、既定 0.1 = upstream の demo） |
 | `tracks.rrd` | `--rrd` を付けたとき。Rerun 用（下記） |
 | `meta.json` | 引数、呼び出しごとの mode、秒、peak VRAM、checkpoint の sha256、git commit / dirty、torch の版 |
@@ -80,6 +82,26 @@ uv run rerun outputs/own/tracks_stride8.rrd      # ビューア
 `frame` の timeline に、`/frame/image`（JPEG）、`/frame/pred/points`、`/frame/pred/trails`（直近 `--trail`
 フレームの軌跡）、`/metrics/pred/visible_fraction` を記録します。`--source` の frame_ids が npz と一致しない
 場合はエラーになります。
+
+### `cow-video`: 密なトラックの動画（AllTracker の demo 形式）
+
+```bash
+uv run cow-video --tracks outputs/own/tracks.npz --source <画像フォルダ> --out outputs/own/dense_rate2_hstack.mp4 \
+  --rate 2 --stack h                         # 入力 | 追跡結果
+uv run cow-video --tracks outputs/own/tracks.npz --source <画像フォルダ> --out outputs/own/dense_dots.mp4 \
+  --rate 2 --stack h --bkg-opacity 0         # 黒背景に点だけ（彩度 x1.5）
+```
+
+AllTracker の `demo.py`（`--rate`、`--conf_thr`、`--bkg_opacity`、`--hstack` / `--vstack`）と同じ見た目の動画を作ります。
+
+- クエリフレームの画素を `--rate` おきに（既定 2。336×448 なら 37,632 点）、各フレームで追跡した位置に描きます。
+- 可視の判定は vis×conf > `--conf-thr`（既定 0.1）です。
+- 色は、クエリフレームでの位置に応じた 2D カラーマップです。
+- 点は rate に応じた半径の丸いアイコンで、GPU で splat します（AllTracker の `draw_pts_gpu` の移植）。
+- `--stack h|v` で、入力を左か上に並べます。
+- 出力は x264、`--crf 20`、yuv420p です。fps は source に従い、画像フォルダなら 10 です。
+
+推論はしないので、同じ `tracks.npz` から、rate や背景を変えて何度でも作り直せます。
 
 ### `cow-eval-tapvid`: TAP-Vid 評価（δavg / AJ / OA）
 
@@ -112,11 +134,12 @@ uv run cow-eval-tapvid --pkl <data>/tapvid/tapvid_davis/tapvid_davis.pkl --datas
 from cowtracker.toolkit.runner import build_runner
 from cowtracker.toolkit.video_io import load_frames, resize_frames
 from cowtracker.toolkit.tapvid import TapVidDataset
-from cowtracker.toolkit.query_tracking import track_queries_first
+from cowtracker.toolkit.query_tracking import dense_tracks_from, track_queries_first
 
 runner, checkpoint = build_runner("checkpoints/cowtracker_model.pth", "cuda", vram_limit_gb=30, window_len=100, mode="auto")
 frames = load_frames("videos/bmx-bumps.mp4", max_frames=48)
 dense = runner(resize_frames(frames.rgb, (336, 560)))      # DenseTracks: track [T,H,W,2], vis, conf, visconf
+dense_mid = dense_tracks_from(runner, resize_frames(frames.rgb, (336, 560)), query_frame=24)  # 前後両方向
 sample = TapVidDataset("tapvid_davis.pkl", (336, 560))[0]   # TapVidSample: video, points, occluded, query_points
 tracks, visconf = track_queries_first(runner, sample.video, sample.query_points)
 ```
