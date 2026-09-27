@@ -130,6 +130,38 @@ uv run cow-eval-tapvid --pkl <data>/tapvid/tapvid_davis/tapvid_davis.pkl --datas
 | `summary.json` | 平均、論文値、差、判定、閾値の掃引、provenance |
 | `videos/<動画>.mp4` と `.rrd` | GT と予測の比較（`--render-videos` で指定した先頭 n 本） |
 
+### `cow-track-sparse`: 多数の短いクリップで、指定した点だけを追跡
+
+```bash
+uv run cow-track-sparse --jobs <jobs.json> --out outputs/<名前> \
+  --checkpoint checkpoints/cowtracker_model.pth --size 336 448 --vram-limit-gb 12
+```
+
+- モデルは 1 回だけ読み込み、`jobs.json` の各クリップを forward で 1 回ずつ推論します。
+- 他のプロジェクト（例: RGB-D データの運動ラベル生成）から、別プロセスとして呼び出すためのコマンドです。
+- CPU では動かしません（`--device cpu` はエラー）。`--checkpoint` は必須で、Hugging Face からの取得はしません。
+
+`jobs.json` の形式（`schema` は `cow_sparse_jobs_v1`）:
+
+| キー | 中身 |
+| :--- | :--- |
+| `id` | 出力ファイル名（`<id>.npz`）になる、パス区切りを含まない名前 |
+| `image_dir` | 画像フォルダの絶対パス |
+| `frames` | `image_dir` 直下のファイル名。時間順で、先頭が query frame。2 以上 `--window-len` 以下 |
+| `queries` | query frame での元解像度の画素座標 `[[u, v], ...]`（画素中心は整数、サブ画素可） |
+
+- 推論を始める前に、全クリップを検証します。検証でエラーになった場合は、出力を作りません。
+- 追跡は `--size` に resize して行います。各 query は、推論座標 `u' = (u + 0.5)·W'/W − 0.5` で密な track 場から bilinear で読み、元解像度に戻します。
+
+出力:
+
+| ファイル | 中身 |
+| :--- | :--- |
+| `<id>.npz` | `uv` [N, T, 2]（元解像度の画素）、`visconf` [N, T]、`frames` |
+| `manifest.json` | jobs の sha256、checkpoint と実行環境、attention、dtype、peak VRAM、ライセンス注記。最後に `status: "complete"` を書く |
+
+出力は CoWTracker の結果なので、FAIR Noncommercial Research License の対象です（非商用の研究用途に限る）。
+
 ## Python API
 
 ```python

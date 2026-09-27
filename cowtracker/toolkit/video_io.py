@@ -40,6 +40,11 @@ def image_paths(directory: Path) -> list[Path]:
     return paths
 
 
+def read_images(paths: list[Path]) -> np.ndarray:
+    """RGB uint8 frames [T, H, W, 3] of image files (all of one size)."""
+    return np.stack([np.asarray(Image.open(path).convert("RGB")) for path in paths])
+
+
 def load_frames(
     source: str | Path, start: int = 0, end: int | None = None, step: int = 1, max_frames: int | None = None
 ) -> Frames:
@@ -48,7 +53,7 @@ def load_frames(
     if path.is_dir():
         paths = image_paths(path)
         positions = select_positions(len(paths), start, end, step, max_frames)
-        rgb = np.stack([np.asarray(Image.open(paths[i]).convert("RGB")) for i in positions])
+        rgb = read_images([paths[i] for i in positions])
         return Frames(rgb=rgb, frame_ids=positions, fps=None, source=str(path))
     if path.suffix.lower() in VIDEO_SUFFIXES and path.is_file():
         video = mediapy.read_video(str(path))
