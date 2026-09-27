@@ -57,8 +57,10 @@ uv run cow-track --source <画像フォルダ> --start 788 --end 888 --size 336 
   4:3 は 336 448 が目安です。
 - `--mode auto`（既定）: `--window-len`（既定は upstream と同じ 100）以下のフレーム数なら単一パス、それを超えると
   upstream の `CoWTrackerWindowed`（窓 100、stride 100、メモリフレーム最大 10）を使います。
-- `--device cuda`（既定）: CUDA が無ければエラーになります。CPU へ自動で切り替えることはありません。CPU で動かすときは
-  `--device cpu` を明示してください（fp32 になり、非常に遅いです）。
+- `--device cuda`（既定）: CUDA が無ければエラーになります。CPU へ自動で切り替えることはありません。
+  `--device cpu` は、重みを使わないテストのためのものです。CPU 推論は、実用上の選択肢として扱いません。
+- `--dtype auto|fp16|bf16|fp32`（既定 auto = CUDA では fp16）: fp16 と fp32 の差は、見えている画素で平均 0.03 px です。
+  bf16 は誤差が大きく、Turing では使えません。精度とメモリの詳細は [rtx2070_memory.md](rtx2070_memory.md) にあります。
 - `--vram-limit-gb`: この値でプロセスの VRAM に上限をかけます。起動時の空きが上限より少なければ、開始しません。
 - `--query-frame q`（既定 0）: 選んだフレームのうち q 番目の全画素を追跡します。AllTracker の demo と同じく、
   `video[q:]` を前向きに、`video[:q+1]` を逆順にして後ろ向きに推論し、重なるフレーム q は 1 回だけ使います。
@@ -151,7 +153,8 @@ tracks, visconf = track_queries_first(runner, sample.video, sample.query_points)
 | 変更 | 理由 | 数値への影響 |
 | :--- | :--- | :--- |
 | `timm==1.0.25` に固定（`pyproject.toml`） | timm 1.0.26 以降は attention に `is_causal` を渡すが、upstream の `FlashAttention3.forward(x, attn_mask)` はそれを受け付けず `TypeError` になる | なし |
-| `video_transformer._get_flash_attention_ops`: FA3 を使うのは capability 9.x（Hopper）だけにした | xformers の FA3 kernel は sm_90 専用。sm_120 では `CUDA error: no kernel image` でプロセスが落ちる。`op=None`（自動選択）も FA3 を選んで同じく落ちる | FA2 と SDPA の最大差 0.0（fp16 のプローブ） |
+| `video_transformer` の attention の kernel: 9.x は FA3、8.0 以上は FA2、それ未満（Turing など）は cutlass。fp32 の入力は cutlass、CPU の入力は PyTorch の SDPA | xformers の FA3 は sm_90 専用で、sm_120 では `CUDA error: no kernel image` でプロセスが落ちる（`op=None` の自動選択も FA3 を選ぶ）。FA2 は sm_80 以上で fp16/bf16 専用なので、Turing と fp32 では `does not support inputs` になる | fp16/bf16 の Ampere 以降は変更なし。FA2 と SDPA の差は 0.0、cutlass と FA2 の差も fp32 基準の差の範囲（[rtx2070_memory.md](rtx2070_memory.md)） |
+| runner は、CPU で dtype に変換してから GPU に移す | upstream の `from_checkpoint` は、fp32 の重み（3.6 GB）をいったん GPU に載せてから変換していた | なし（変換は同じ） |
 | `CoWTracker.forward` / `CoWTrackerWindowed.forward`: feature 抽出の直後に `del tokens` | aggregator の全 24 層の出力（0.178 GB/フレーム）を、head の実行中も保持していた | なし（段ごとに呼んだ結果と `torch.equal` で一致） |
 | `FeatureExtractor.drop_unused_layers`: aggregator の直後に、DPT が読まない 20 層を捨てる（読むのは 4, 11, 17, 23 層） | feature 抽出の段で、全 24 層を持ったまま DPT と ResNet を走らせていた | なし（同上） |
 | `CoWTrackerWindowed.forward`: ループ末尾で `window_pred`、`extended_features`、`first_frame_features`、`frames` も捨てる | これらのビューが、前の窓の features（111 フレームで約 2.7 GB）を次の窓まで保持していた | なし（参照を捨てるだけ） |

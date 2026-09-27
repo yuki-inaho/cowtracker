@@ -24,7 +24,8 @@
 - **未検証:**
   - Kinetics と RoboTAP の実データ（ローダの形式は、合成データのテストでだけ確認しています）。
   - Hopper など他の GPU（FA3 を使う経路は upstream のままで、ここでは動かしていません）。
-  - CPU での実用的な速度（fp32 になり、非常に遅いです）。
+  - RTX 2070 の実機（RTX 5090 上で、VRAM 上限と kernel を同じにして模擬しただけ。[rtx2070_memory.md](rtx2070_memory.md)）。
+  - CPU 推論は選択肢にしない（CPU の経路は、重みを使わないテストのためのもの）。
   - 学習と fine-tune（upstream にも学習コードはありません）。
 
 ## 2. クリティカルな要求・制約
@@ -48,6 +49,7 @@
 | :--- | :--- | :--- |
 | 入口 | `README.md` | upstream の説明と、この fork の節（uv 環境とツール） |
 | 利用方法 | [uv_tools.md](uv_tools.md) | セットアップ、コマンド、出力の形式、評価プロトコル、upstream の変更点、VRAM の表、評価結果 |
+| 精度と小さな GPU | [rtx2070_memory.md](rtx2070_memory.md) | fp16 / bf16 / fp32 の精度、kernel の選び方、メモリのモデル式、RTX 2070 の模擬と推奨設定 |
 | 論文 | [cowtracker.pdf](cowtracker.pdf) | Table 1（TAP-Vid の数値）、入力解像度 336×560、K=5 回の反復 |
 | 環境 | `pyproject.toml`、`uv.lock` | 依存の固定、cu128 の index、console scripts、pytest の marker `gpu`、ruff の設定 |
 | 実装 | `cowtracker/toolkit/` | 下の表 |
@@ -157,6 +159,8 @@ uv run cow-eval-tapvid --pkl <data>/tapvid/tapvid_davis/tapvid_davis.pkl --datas
 | :--- | :--- |
 | `CUDA error: no kernel image is available`（flash_fwd_launch_template） | FA3 の kernel は sm_90 専用。`video_transformer._get_flash_attention_ops` が capability 9 のときだけ FA3 を使っているか確認する。`op=None` の自動選択も FA3 を選ぶので使わない |
 | `FlashAttention3.forward() got an unexpected keyword argument 'is_causal'` | timm が 1.0.26 以降になっている。`uv sync --locked` で 1.0.25 に戻す |
+| `memory_efficient_attention does not support inputs` | FA2 に、fp32 か sm_80 未満の GPU の入力が渡っている。このブランチの `video_transformer` は cutlass を選ぶので、古いコードを使っていないか確認する |
+| RTX 2070 など 8 GB の GPU | [rtx2070_memory.md](rtx2070_memory.md) の推奨設定（fp16、解像度と `--window-len`、`--vram-limit-gb 7`）に従う |
 | `Input image height ... is not a multiple of patch height 14`、`size of tensor a (63) must match ... (64)` | 入力サイズが 112 の倍数でない。`--size` を 336 560 や 336 448 などにする |
 | CUDA OOM | ①`reserved but unallocated` が大きいなら断片化。runner は expandable segments と `empty_cache` を使うので、runner を通さずに直接 model を呼んでいないか確認する。②本当に足りないなら、上限・フレーム数・解像度を確認する。窓や解像度を下げると結果が変わるので、そのことを記録する |
 | `free VRAM ... is below the requested limit` | 他のプロセスが GPU を使っている。上限を下げるか、空くのを待つ（自動では待たない） |
