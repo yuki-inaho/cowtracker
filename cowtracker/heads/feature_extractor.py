@@ -60,6 +60,11 @@ class FeatureExtractor(nn.Module):
 
         self.out_dim = features + side_resnet_channels
 
+    def drop_unused_layers(self, aggregated_tokens_list: list) -> list:
+        """Backbone layers with the ones the DPT head does not read replaced by None (frees ~20/24 of them)."""
+        used = set(self.INTERMEDIATE_LAYER_IDX)
+        return [tokens if index in used else None for index, tokens in enumerate(aggregated_tokens_list)]
+
     def forward(
         self,
         aggregated_tokens_list: list,

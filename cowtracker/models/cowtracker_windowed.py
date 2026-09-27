@@ -96,9 +96,11 @@ class CoWTrackerWindowed(nn.Module, PyTorchModelHubMixin):
 
             # Extract backbone tokens
             tokens, patch_idx = self.model.aggregator(frames)
+            tokens = self.model.feature_extractor.drop_unused_layers(tokens)  # peak VRAM; no numeric change
 
             # Extract combined features
             features = self.model.feature_extractor(tokens, frames, patch_idx)
+            del tokens  # free the 24 backbone layers before the head (peak VRAM; no numeric change)
 
             # Split features: first_frame | memory | window
             first_frame_features = features[:, 0:1]
@@ -125,7 +127,8 @@ class CoWTrackerWindowed(nn.Module, PyTorchModelHubMixin):
 
             # Cleanup for memory efficiency
             if not self.training:
-                del features, tokens, pred
+                # also drop the views that would keep this window's features alive into the next window
+                del features, pred, window_pred, extended_features, first_frame_features, frames
                 torch.cuda.empty_cache()
 
         if not self.training:

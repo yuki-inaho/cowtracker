@@ -105,9 +105,11 @@ class CoWTracker(nn.Module, PyTorchModelHubMixin):
 
         # Extract backbone tokens
         tokens, patch_idx = self.aggregator(images)
+        tokens = self.feature_extractor.drop_unused_layers(tokens)  # peak VRAM; no numeric change
 
         # Extract high resolution features
         features = self.feature_extractor(tokens, images, patch_idx)
+        del tokens  # free the 24 backbone layers before the head (peak VRAM; no numeric change)
 
         # Run tracking
         predictions = self.tracking_head(features, image_size=(H, W))
